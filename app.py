@@ -16,7 +16,7 @@ import urllib.parse
 df = pd.read_csv("DATA/EDIF_FINAL.csv")
 
 
-# Example: UTM Zone 33N, WGS84
+
 def get_svg_shape(shape_type, size, color):
     # Ensure minimum size
     s = max(size, 12) 
@@ -140,6 +140,49 @@ def asignar_simbolo(valor):
 df1["symbol"] = df1["CONFIG"].apply(asignar_simbolo)
 print(df1)
 
+# --- Color scale based on PLANTAS -------------------------------------
+df1["PLANTAS"] = pd.to_numeric(df1["PLANTAS"], errors="coerce")
+
+_valid = df1["PLANTAS"].dropna()
+PLANTAS_MIN = float(_valid.min()) if not _valid.empty else 0.0
+PLANTAS_MAX = float(_valid.max()) if not _valid.empty else 1.0
+COLORSCALE = "Viridis"          # try "Turbo", "Plasma", "YlOrRd"...
+
+def color_por_plantas(valor):
+    """Returns an 'rgb(r,g,b)' string mapped from the PLANTAS value."""
+    if pd.isna(valor):
+        return "gray"
+    if PLANTAS_MAX == PLANTAS_MIN:
+        t = 0.5
+    else:
+        t = (float(valor) - PLANTAS_MIN) / (PLANTAS_MAX - PLANTAS_MIN)
+    t = min(max(t, 0.0), 1.0)
+    return px.colors.sample_colorscale(COLORSCALE, t)[0]
+
+def crear_leyenda(n=7):
+    stops = [px.colors.sample_colorscale(COLORSCALE, i / (n - 1))[0] for i in range(n)]
+    return html.Div(
+        [
+            html.Div("Plantas", style={"fontSize": "12px", "marginBottom": "4px"}),
+            html.Div(style={
+                "width": "160px", "height": "12px",
+                "background": f"linear-gradient(to right, {', '.join(stops)})",
+                "border": "1px solid #333",
+            }),
+            html.Div(
+                [html.Span(f"{PLANTAS_MIN:.0f}"), html.Span(f"{PLANTAS_MAX:.0f}")],
+                style={"display": "flex", "justifyContent": "space-between",
+                       "fontSize": "11px", "marginTop": "2px"},
+            ),
+        ],
+        style={
+            "position": "absolute", "bottom": "20px", "right": "20px",
+            "zIndex": 1000, "background": "rgba(255,255,255,0.85)",
+            "color": "#111", "padding": "8px 10px", "borderRadius": "6px",
+        },
+    )
+
+
 def create_map(dataframe, selected_id=None):
     df_map = dataframe.copy()
     df_map["EDIF"] = df_map["EDIF"].astype(str).str.strip()
@@ -157,7 +200,7 @@ def create_map(dataframe, selected_id=None):
             center_lon = float(selected_rows.iloc[0]["lon"])
             zoom = 16
 
-    size_scaler = 20
+    size_scaler = 150
     markers = []
 
     # SINGLE LOOP TO CREATE ALL MARKERS
@@ -179,10 +222,14 @@ def create_map(dataframe, selected_id=None):
         else:
             config_val = int(float(raw_config)) 
 
-        color_map = {1: "#1f77b4", 2: "#ff7f0e", 3: "#2ca02c"}
         shape_map = {1: "circle", 2: "triangle", 3: "square"}
 
-        color = color_map.get(config_val, "gray")
+        color = color_por_plantas(row.get('PLANTAS'))
+
+        edif_id = str(row.get("EDIF", ""))
+        if edif_id == selected_id:
+            color = "#d62728"   # selected stays red
+
         shape = shape_map.get(config_val, "circle")
 
         # 2. Check if selected and determine size
@@ -241,15 +288,19 @@ def create_map(dataframe, selected_id=None):
     print(f"Created {len(markers)} markers")
 
     # Return the Dash Leaflet Map component
-    return dl.Map(
-        center=[center_lat, center_lon],
-        zoom=zoom,
-        children=[
-            dl.TileLayer(), # Default is OpenStreetMap
-            dl.LayerGroup(markers)
+    return html.Div(
+        [
+            dl.Map(
+                center=[center_lat, center_lon],
+                zoom=zoom,
+                children=[dl.TileLayer(), dl.LayerGroup(markers)],
+                style={"width": "100%", "height": "600px"},
+            ),
+            crear_leyenda(),
         ],
-        style={'width': '100%', 'height': '600px'}
+        style={"position": "relative"},
     )
+
 
 
 
@@ -394,6 +445,6 @@ def select_point(n_clicks_list): # Changed parameter name to reflect what Dash a
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
+        port=int(os.environ.get("PORT", 8050)),
         debug=False
     )
